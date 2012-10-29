@@ -3,7 +3,7 @@ module Rabl
     include Rabl::Partials
 
     # List of supported rendering formats
-    FORMATS = [:json, :xml, :plist, :bson, :msgpack]
+    FORMATS = [:json, :xml, :plist, :bson, :msgpack, :annotated_json]
 
     # Constructs a new ejs engine based on given vars, handler and declarations
     # Rabl::Engine.new("...source...", { :format => "xml", :root => true, :view_path => "/path/to/views" })
@@ -108,6 +108,29 @@ module Rabl
       Rabl.configuration.bson_engine.serialize(result).to_s
     end
 
+    def to_annotated_json(options={})
+      out = "{\n"
+      indent = options[:indent] || 2
+      level = options[:level] || 1
+      hash = options[:hash] || to_hash(options)
+      annotations = hash.delete(:_annotations) || {}
+
+      hash.each_pair do |k,v|
+        annotation = annotations[k]
+        if annotation
+          out << "\n"
+          out << ' '*indent*level + "/*\n"
+          out << ' '*indent*level + " * #{annotation}\n"
+          out << ' '*indent*level + " */\n"
+        end
+        out << ' '*indent*level + "#{k.to_s}: "
+        val = v.is_a?(Hash) ? to_annotated_json(hash: v, level: level+1, indent: indent) : v.to_json
+        out << val + "\n"
+      end
+      out << ' '*indent*(level-1) + "}\n"
+      out
+    end
+
     # Sets the object to be used as the data source for this template
     # object(@user)
     # object @user => :person
@@ -147,6 +170,10 @@ module Rabl
       @_cache = [key, options]
     end
 
+    def annotate(text="")
+      @_options[:annotations][:_unassigned] = text
+    end
+
     # Indicates an attribute or method should be included in the json output
     # attribute :foo, :as => "bar"
     # attribute :foo => :bar
@@ -155,7 +182,11 @@ module Rabl
         args.first.each_pair { |k,v| self.attribute(k, :as => v) }
       else # array of attributes i.e :foo, :bar, :baz
         options = args.extract_options!
-        args.each { |name| @_options[:attributes][name] = options[:as] || name }
+        args.each do |name|
+          name = options[:as] || name
+          assign_annotation(name)
+          @_options[:attributes][name] = name
+        end
       end
     end
     alias_method :attributes, :attribute
@@ -165,6 +196,7 @@ module Rabl
     # node(:foo, :if => lambda { ... }) { "bar" }
     def node(name = nil, options={}, &block)
       @_options[:node].push({ :name => name, :options => options, :block => block })
+      assign_annotation(name)
     end
     alias_method :code, :node
 
@@ -172,6 +204,7 @@ module Rabl
     # child(@user) { attribute :full_name }
     def child(data, options={}, &block)
       @_options[:child].push({ :data => data, :options => options, :block => block })
+      assign_annotation(data)
     end
 
     # Glues data from a child node to the json_output
@@ -252,12 +285,20 @@ module Rabl
 
     # Resets the options parsed from a rabl template.
     def reset_options!
+      @_options[:annotations] = {}
       @_options[:attributes] = {}
       @_options[:node] = []
       @_options[:child] = []
       @_options[:glue] = []
       @_options[:extends] = []
       @_options[:root_name]  = nil
+    end
+
+    def assign_annotation(name)
+      return if name.nil?
+      return unless annotation = @_options[:annotations].delete(:_unassigned)
+      name = name.values.first if name.is_a? Hash #child or node with :a => :b name
+      @_options[:annotations][name] = annotation
     end
 
     # Caches the results of the block based on object cache_key

@@ -29,6 +29,7 @@ module Rabl
     # compile_hash(:root_name => "user")
     def compile_hash(options={})
       @_result = {}
+      @_result[:_annotations] = @options[:annotations] if @options[:annotated]
       # Extends
       @options[:extends].each do |settings|
         extends(settings[:file], settings[:options], &settings[:block])
@@ -91,7 +92,7 @@ module Rabl
       return false unless data.present? && resolve_condition(options)
       name, object = data_name(data), data_object(data)
       include_root = is_collection?(object) && @options[:child_root] # child @users
-      engine_options = @options.slice(:child_root).merge(:root => include_root)
+      engine_options = @options.slice(:child_root, :annotated).merge(:root => include_root)
       object = { object => name } if data.respond_to?(:each_pair) && object # child :users => :people
       @_result[name] = self.object_to_hash(object, engine_options, &block)
     end
@@ -108,9 +109,12 @@ module Rabl
     # Extends an existing rabl template with additional attributes in the block
     # extends("users/show") { attribute :full_name }
     def extends(file, options={}, &block)
-      options = @options.slice(:child_root).merge(:object => @_object).merge(options)
+      options = @options.slice(:child_root, :annotated).merge(:object => @_object).merge(options)
       result = self.partial(file, options, &block)
-      @_result.merge!(result) if result.is_a?(Hash)
+      if result.is_a?(Hash)
+        @_result[:_annotations].merge!(result.delete(:_annotations)) if options[:annotated]
+        @_result.merge!(result)
+      end
     end
 
     # resolve_condition(:if => true) => true
